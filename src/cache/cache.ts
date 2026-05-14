@@ -1,88 +1,152 @@
-import { CacheConfig } from '../core/types';
 import { createHash } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, statSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, readdirSync } from 'fs';
 import { join } from 'path';
+import { LRUCache } from 'lru-cache';
+import { z } from 'zod';
+import { CacheConfig, ExtractedContent, ContentDiff } from '../core/types';
+
+const urlSchema = z.string().url();
+
+interface FileCacheEntry {
+  hash: string;
+  timestamp: number;
+  data: ExtractedContent;
+}
 
 /**
- * File-based cache with TTL support for crawled pages.
- * Enables incremental re-crawling by storing content with timestamps.
+ * Dual-layer cache (LRU memory + file-based) with content hashing for diff detection.
  */
 export class CrawlCache {
-  private config: Required<CacheConfig>;
-  private memoryCache = new Map<string, { data: any; expires: number }>();
+  private memoryCache: LRUCache<string, ExtractedContent>;
+  private hashCache: LRUCache<string, string>;
+  private config: CacheConfig;
+  private cacheDir: string;
 
   constructor(config: Partial<CacheConfig> = {}) {
     this.config = {
       enabled: config.enabled ?? true,
       ttl: config.ttl ?? 3600,
       maxSize: config.maxSize ?? 500,
-      directory: config.directory ?? join(process.cwd(), '.webcontext-cache'),
+      directory: config.directory,
+      contentHashing: config.contentHashing ?? true,
     };
-
-    if (this.config.enabled && this.config.directory) {
-      if (!existsSync(this.config.directory)) {
-        mkdirSync(this.config.directory, { recursive: true });
-      }
+    this.cacheDir = this.config.directory || join(process.cwd(), '.webcontext-cache');
+    if (this.config.enabled && !existsSync(this.cacheDir)) {
+      mkdirSync(this.cacheDir, { recursive: true });
     }
+    this.memoryCache = new LRUCache<string, ExtractedContent>({
+      max: this.config.maxSize,
+      ttl: this.config.ttl * 1000,
+    });
+    this.hashCache = new LRUCache<string, string>({
+      max: this.config.maxSize,
+      ttl: this.config.ttl * 1000,
+    });
   }
 
-  get(url: string): any | null {
-    if (!this.config.enabled) return null;
-
-    const key = this.urlToKey(url);
-
-    // Check memory first
-    const memEntry = this.memoryCache.get(key);
-    if (memEntry && memEntry.expires > Date.now()) {
-      return memEntry.data;
-    }
-
-    // Check disk
-    const filePath = join(this.config.directory, key + '.json');
-    if (existsSync(filePath)) {
-      const stat = statSync(filePath);
-      const age = (Date.now() - stat.mtimeMs) / 1000;
-      if (age < this.config.ttl) {
-        const data = JSON.parse(readFileSync(filePath, 'utf-8'));
-        this.memoryCache.set(key, { data, expires: Date.now() + this.config.ttl * 1000 });
-        return data;
-      }
-    }
-
-    return null;
-  }
-
-  set(url: string, data: any): void {
-    if (!this.config.enabled) return;
-
-    const key = this.urlToKey(url);
-    this.memoryCache.set(key, { data, expires: Date.now() + this.config.ttl * 1000 });
-
-    // Evict if over size
-    if (this.memoryCache.size > this.config.maxSize) {
-      const firstKey = this.memoryCache.keys().next().value;
-      if (firstKey) this.memoryCache.delete(firstKey);
-    }
-
-    // Write to disk
-    const filePath = join(this.config.directory, key + '.json');
-    writeFileSync(filePath, JSON.stringify(data), 'utf-8');
-  }
-
-  has(url: string): boolean {
-    return this.get(url) !== null;
-  }
-
-  invalidate(url: string): void {
-    const key = this.urlToKey(url);
-    this.memoryCache.delete(key);
-  }
-
-  clear(): void {
-    this.memoryCache.clear();
+  private hash(content: string): string {
+    return createHash('sha256').update(content).digest('hex');
   }
 
   private urlToKey(url: string): string {
     return createHash('md5').update(url).digest('hex');
+  }
+
+  private readFileEntry(url: string): FileCacheEntry | null {
+    const filepath = join(this.cacheDir, this.urlToKey(url) + '.json');
+    if (!existsSync(filepath)) return null;
+    try {
+      const entry: FileCacheEntry = JSON.parse(readFileSync(filepath, 'utf-8'));
+      const age = (Date.now() - entry.timestamp) / 1000;
+      if (age > this.config.ttl) {
+        rmSync(filepath);
+        return null;
+      }
+      return entry;
+    } catch {
+      return null;
+    }
+  }
+
+  get(url: string): ExtractedContent | undefined {
+    if (!this.config.enabled) return undefined;
+    try { urlSchema.parse(url); } catch { return undefined; }
+
+    const memResult = this.memoryCache.get(url);
+    if (memResult) return memResult;
+
+    const fileEntry = this.readFileEntry(url);
+    if (fileEntry) {
+      this.memoryCache.set(url, fileEntry.data);
+      this.hashCache.set(url, fileEntry.hash);
+      return fileEntry.data;
+    }
+    return undefined;
+  }
+
+  set(url: string, content: ExtractedContent): void {
+    if (!this.config.enabled) return;
+    try { urlSchema.parse(url); } catch { return; }
+
+    const contentHash = this.hash(JSON.stringify(content));
+    this.memoryCache.set(url, content);
+    this.hashCache.set(url, contentHash);
+
+    const entry: FileCacheEntry = { hash: contentHash, timestamp: Date.now(), data: content };
+    const filepath = join(this.cacheDir, this.urlToKey(url) + '.json');
+    writeFileSync(filepath, JSON.stringify(entry));
+  }
+
+  has(url: string): boolean {
+    if (!this.config.enabled) return false;
+    if (this.memoryCache.has(url)) return true;
+    return this.readFileEntry(url) !== null;
+  }
+
+  invalidate(url: string): void {
+    this.memoryCache.delete(url);
+    this.hashCache.delete(url);
+    const filepath = join(this.cacheDir, this.urlToKey(url) + '.json');
+    if (existsSync(filepath)) rmSync(filepath);
+  }
+
+  clear(): void {
+    this.memoryCache.clear();
+    this.hashCache.clear();
+    if (existsSync(this.cacheDir)) {
+      for (const file of readdirSync(this.cacheDir)) {
+        if (file.endsWith('.json')) rmSync(join(this.cacheDir, file));
+      }
+    }
+  }
+
+  getContentHash(url: string): string | undefined {
+    const memHash = this.hashCache.get(url);
+    if (memHash) return memHash;
+    const fileEntry = this.readFileEntry(url);
+    return fileEntry?.hash;
+  }
+
+  hasChanged(url: string, newContent: string): ContentDiff {
+    const currentHash = this.hash(newContent);
+    const previousHash = this.getContentHash(url) || '';
+    const changed = previousHash !== '' && previousHash !== currentHash;
+
+    let addedSections: string[] = [];
+    let removedSections: string[] = [];
+
+    if (changed) {
+      const cached = this.get(url);
+      if (cached) {
+        const oldHeadings = cached.headings.map(h => h.text);
+        const newHeadings = newContent.match(/^#{1,6}\s+(.+)$/gm)?.map(h => h.replace(/^#+\s+/, '')) || [];
+        const oldSet = new Set(oldHeadings);
+        const newSet = new Set(newHeadings);
+        addedSections = newHeadings.filter(h => !oldSet.has(h));
+        removedSections = oldHeadings.filter(h => !newSet.has(h));
+      }
+    }
+
+    return { url, previousHash, currentHash, changed, addedSections, removedSections };
   }
 }

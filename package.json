@@ -1,7 +1,7 @@
 {
   "name": "@sumeethmoolya/webcontext-ai",
-  "version": "1.0.0",
-  "description": "Turn any web content into clean AI-ready context instantly",
+  "version": "2.0.0",
+  "description": "Turn any web content into clean AI-ready context — with crawling, chunking, semantic search, and MCP tools",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -19,6 +19,14 @@
     "./sdk/mcp": {
       "types": "./dist/sdk/mcp.d.ts",
       "require": "./dist/sdk/mcp.js"
+    },
+    "./search": {
+      "types": "./dist/search/vector.d.ts",
+      "require": "./dist/search/vector.js"
+    },
+    "./utils": {
+      "types": "./dist/utils/index.d.ts",
+      "require": "./dist/utils/index.js"
     }
   },
   "files": [
@@ -30,10 +38,29 @@
     "prepublishOnly": "npm run build",
     "dev": "ts-node src/index.ts",
     "cli": "ts-node src/cli/index.ts",
+    "start": "node dist/cli/index.js",
+    "serve": "node dist/cli/index.js serve",
     "test": "jest",
     "lint": "eslint src/"
   },
-  "keywords": ["web-scraping", "ai-context", "llm", "rag", "markdown", "crawling", "web-crawler", "documentation", "firecrawl", "mcp"],
+  "keywords": [
+    "web-scraping",
+    "ai-context",
+    "llm",
+    "rag",
+    "markdown",
+    "crawling",
+    "web-crawler",
+    "documentation",
+    "firecrawl",
+    "mcp",
+    "vector-search",
+    "sitemap",
+    "tfidf",
+    "semantic-search",
+    "mcp-server",
+    "langchain"
+  ],
   "author": "sumeethmoolya",
   "repository": {
     "type": "git",
@@ -49,16 +76,14 @@
     "linkedom": "0.18.0",
     "tiktoken": "1.0.15",
     "commander": "12.1.0",
-    "ora": "8.0.1",
-    "chalk": "5.3.0",
-    "p-queue": "8.0.1",
+    "ora": "5.4.1",
+    "chalk": "4.1.2",
+    "p-queue": "6.6.2",
     "robots-parser": "3.0.1",
     "lru-cache": "10.2.2",
     "zod": "3.23.8",
     "express": "4.19.2",
-    "cors": "2.8.5",
-    "node-cache": "5.1.2",
-    "crypto-js": "4.2.0"
+    "cors": "2.8.5"
   },
   "devDependencies": {
     "typescript": "5.4.5",

@@ -43,10 +43,16 @@ export class ContentExtractor {
                        $('meta[property="og:description"]').attr('content') || '';
 
     // Extract structured data before converting
-    const codeBlocks = this.extractCodeBlocks($, contentEl);
+    let codeBlocks = this.extractCodeBlocks($, contentEl);
     const headings = this.extractHeadings($, contentEl);
     const links = this.extractLinks($, contentEl, url);
     const metadata = this.extractMetadata($, url);
+
+    // Extract OpenAPI endpoints in API focus mode
+    if (focusMode === 'api') {
+      const apiBlocks = this.extractOpenAPIEndpoints($, contentEl);
+      codeBlocks = codeBlocks.concat(apiBlocks);
+    }
 
     // Get clean text
     const text = contentEl.text().replace(/\s+/g, ' ').trim();
@@ -87,7 +93,32 @@ export class ContentExtractor {
       }
     }
 
-    return $('body');
+    // Score remaining candidates by content density
+    const body = $('body');
+    const candidates = body.find('div, section').toArray();
+    let best: cheerio.Cheerio<any> | null = null;
+    let bestScore = 0;
+
+    for (const candidate of candidates) {
+      const $c = $(candidate);
+      const textLen = $c.text().trim().length;
+      if (textLen < 200) continue;
+
+      const htmlLen = ($c.html() || '').length;
+      if (htmlLen === 0) continue;
+
+      const density = textLen / htmlLen;
+      const paragraphs = $c.find('p').length;
+      const codeEls = $c.find('pre, code').length;
+      const score = density * (1 + paragraphs * 0.1 + codeEls * 0.2);
+
+      if (score > bestScore) {
+        bestScore = score;
+        best = $c;
+      }
+    }
+
+    return best || body;
   }
 
   private extractTitle($: cheerio.CheerioAPI): string {
@@ -164,6 +195,7 @@ export class ContentExtractor {
     meta.siteName = $('meta[property="og:site_name"]').attr('content') || undefined;
     meta.type = this.detectContentType($, url);
     meta.framework = this.detectFramework($, url);
+    meta.version = this.detectVersion($);
 
     return meta;
   }
@@ -190,15 +222,89 @@ export class ContentExtractor {
     return frameworks.find(f => text.includes(f) || url.includes(f));
   }
 
+  private detectVersion($: cheerio.CheerioAPI): string | undefined {
+    // Check meta tags first
+    const metaVersion = $('meta[name="version"]').attr('content') ||
+                        $('meta[name="doc-version"]').attr('content');
+    if (metaVersion) return metaVersion;
+
+    // Search visible text for version patterns
+    const text = $('body').text();
+    const match = text.match(/(?:v|version\s*)(\d+\.\d+(?:\.\d+)?(?:-[\w.]+)?)/i);
+    return match ? match[0].trim() : undefined;
+  }
+
+  extractOpenAPIEndpoints($: cheerio.CheerioAPI, container: cheerio.Cheerio<any>): CodeBlock[] {
+    const blocks: CodeBlock[] = [];
+    const methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'];
+
+    // Look for structured endpoint elements (Swagger UI, Redoc, etc.)
+    container.find('.opblock, .operation, [class*="endpoint"], [class*="method"]').each((_, el) => {
+      const $el = $(el);
+      const text = $el.text();
+      const methodMatch = text.match(new RegExp(`\\b(${methods.join('|')})\\b`));
+      const pathMatch = text.match(/\/[\w\-\/.{}:]+/);
+      if (methodMatch && pathMatch) {
+        const description = $el.find('.opblock-summary-description, .description, p').first().text().trim();
+        const endpoint = `${methodMatch[1]} ${pathMatch[0]}`;
+        blocks.push({
+          language: 'http',
+          code: description ? `${endpoint}\n# ${description}` : endpoint,
+          context: 'API Endpoint',
+        });
+      }
+    });
+
+    // Fallback: scan for HTTP method + path patterns in text nodes
+    if (!blocks.length) {
+      const text = container.text();
+      const endpointRegex = new RegExp(`\\b(${methods.join('|')})\\s+(\/[\\w\\-\\/.{}:?&=]+)`, 'g');
+      let match: RegExpExecArray | null;
+      while ((match = endpointRegex.exec(text)) !== null) {
+        blocks.push({
+          language: 'http',
+          code: `${match[1]} ${match[2]}`,
+          context: 'API Endpoint',
+        });
+      }
+    }
+
+    return blocks;
+  }
+
   private detectLanguage(code: string): string {
+    // Python
     if (code.includes('import ') && code.includes('from ')) return 'python';
-    if (code.includes('const ') || code.includes('let ') || code.includes('=>')) return 'javascript';
-    if (code.includes('func ') && code.includes(':=')) return 'go';
-    if (code.includes('fn ') && code.includes('->')) return 'rust';
-    if (code.includes('public class') || code.includes('System.out')) return 'java';
-    if (code.includes('<?php')) return 'php';
-    if (code.match(/^\s*\$/m)) return 'bash';
+    // TypeScript (check before JS due to overlap)
     if (code.includes('interface ') || code.includes(': string')) return 'typescript';
+    // JavaScript
+    if (code.includes('const ') || code.includes('let ') || code.includes('=>')) return 'javascript';
+    // Go
+    if (code.includes('func ') && code.includes(':=')) return 'go';
+    // Rust
+    if (code.includes('fn ') && code.includes('->')) return 'rust';
+    // Java
+    if (code.includes('public class') || code.includes('System.out')) return 'java';
+    // C#
+    if (code.includes('using System') || (code.includes('namespace') && code.includes('public static'))) return 'csharp';
+    // Kotlin
+    if (code.includes('fun ') && (code.includes('val ') || code.includes('package'))) return 'kotlin';
+    // Swift
+    if (code.includes('import Foundation') || (code.includes('func ') && code.includes('let '))) return 'swift';
+    // Ruby
+    if (code.includes('def ') && code.includes('end')) return 'ruby';
+    // PHP
+    if (code.includes('<?php')) return 'php';
+    // SQL
+    if (/\b(SELECT|INSERT|UPDATE|CREATE TABLE)\b/.test(code)) return 'sql';
+    // Shell
+    if (code.startsWith('#!/bin/bash') || /^\s*\$/m.test(code)) return 'bash';
+    // HTML
+    if (code.trimStart().startsWith('<') && /<\w+[\s>]/.test(code)) return 'html';
+    // CSS
+    if (/\{[^}]*(color|margin|padding|display|font)\s*:/.test(code)) return 'css';
+    // YAML
+    if (/^[\w-]+\s*:(?:\s|$)/m.test(code) && !code.includes('{')) return 'yaml';
     return 'text';
   }
 }

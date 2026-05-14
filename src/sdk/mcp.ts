@@ -1,5 +1,6 @@
 import { WebContext } from '../index';
-import { CrawlOptions, CrawlResult, ContentChunk } from '../core/types';
+import { VectorSearch } from '../search/vector';
+import { CrawlOptions, SearchResult } from '../core/types';
 
 /**
  * MCP (Model Context Protocol) Server for WebContext.
@@ -12,8 +13,8 @@ export interface MCPTool {
   handler: (input: any) => Promise<any>;
 }
 
-export function createMCPTools(): MCPTool[] {
-  const wc = new WebContext();
+export function createMCPTools(config?: any): MCPTool[] {
+  const wc = new WebContext(config);
 
   return [
     {
@@ -54,29 +55,62 @@ export function createMCPTools(): MCPTool[] {
           maxPages: input.maxPages ?? 20,
         });
         return {
-          pages: result.pages.map(p => ({ title: p.title, url: p.url, markdown: p.markdown })),
+          pages: result.pages.map(p => ({ title: p.title, url: p.url, markdown: p.markdown.slice(0, 2000) })),
           stats: result.stats,
         };
       },
     },
     {
       name: 'webcontext_search',
-      description: 'Extract content from a URL and search for specific information.',
+      description: 'Extract content from a URL and perform semantic search for specific information.',
       inputSchema: {
         type: 'object',
         properties: {
           url: { type: 'string', description: 'URL to search within' },
           query: { type: 'string', description: 'Search query to find relevant sections' },
+          topK: { type: 'number', description: 'Number of results (default: 5)' },
         },
         required: ['url', 'query'],
       },
-      handler: async (input: { url: string; query: string }) => {
-        const result = await wc.toChunks(input.url);
-        const queryLower = input.query.toLowerCase();
-        const relevant = result
-          .filter(c => c.content.toLowerCase().includes(queryLower))
-          .slice(0, 5);
-        return { chunks: relevant.length ? relevant : result.slice(0, 3) };
+      handler: async (input: { url: string; query: string; topK?: number }) => {
+        const results = await wc.search(input.url, input.query, input.topK ?? 5);
+        return { results: results.map(r => ({ content: r.chunk.content, score: r.score, metadata: r.chunk.metadata })) };
+      },
+    },
+    {
+      name: 'webcontext_chunk',
+      description: 'Get RAG-ready content chunks from a URL.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL to chunk' },
+          maxTokens: { type: 'number', description: 'Max tokens per chunk (default: 1500)' },
+        },
+        required: ['url'],
+      },
+      handler: async (input: { url: string; maxTokens?: number }) => {
+        const chunks = await wc.toChunks(input.url);
+        return { chunks: chunks.map(c => ({ id: c.id, content: c.content, tokens: c.tokens, metadata: c.metadata })), count: chunks.length };
+      },
+    },
+    {
+      name: 'webcontext_summarize',
+      description: 'Get an extractive summary of a web page.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL to summarize' },
+        },
+        required: ['url'],
+      },
+      handler: async (input: { url: string }) => {
+        const result = await wc.extract(input.url);
+        return {
+          title: result.pages[0]?.title,
+          summary: result.context.summary,
+          pageCount: result.stats.pagesProcessed,
+          totalTokens: result.stats.totalTokens,
+        };
       },
     },
   ];

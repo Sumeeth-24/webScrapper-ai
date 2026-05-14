@@ -1,24 +1,55 @@
-import { BrowserConfig } from './types';
+import robotsParser from 'robots-parser';
+import { BrowserConfig, RetryConfig, RateLimitConfig } from '../core/types';
+
+const DEFAULT_RETRY: RetryConfig = { maxRetries: 3, backoffMs: 1000, backoffMultiplier: 2, retryOn: [429, 500, 502, 503, 504] };
+const DEFAULT_RATE_LIMIT: RateLimitConfig = { requestsPerSecond: 2, burstSize: 5 };
 
 /**
  * Browser manager using Playwright for JS-heavy page rendering.
- * Handles page lifecycle, authentication, and resource optimization.
+ * Handles rate limiting, retry with backoff, and robots.txt compliance.
  */
 export class BrowserManager {
   private browser: any = null;
   private context: any = null;
   private config: BrowserConfig;
+  private rateLimitConfig: RateLimitConfig;
+  private robotsCache: Map<string, any> = new Map();
+  private tokens: number;
+  private lastRefill: number;
 
-  constructor(config: BrowserConfig = {}) {
+  constructor(config: BrowserConfig = {}, rateLimitConfig?: RateLimitConfig) {
     this.config = {
       headless: true,
-      userAgent: 'WebContext/1.0 (AI Context Crawler)',
+      userAgent: 'WebContext/2.0 (AI Context Crawler)',
       viewport: { width: 1280, height: 720 },
       ...config,
     };
+    this.rateLimitConfig = rateLimitConfig || DEFAULT_RATE_LIMIT;
+    this.tokens = this.rateLimitConfig.burstSize;
+    this.lastRefill = Date.now();
   }
 
-  async initialize(): Promise<void> {
+  private refillTokens(): void {
+    const now = Date.now();
+    const elapsed = (now - this.lastRefill) / 1000;
+    this.tokens = Math.min(this.rateLimitConfig.burstSize, this.tokens + elapsed * this.rateLimitConfig.requestsPerSecond);
+    this.lastRefill = now;
+  }
+
+  private async waitForToken(): Promise<void> {
+    this.refillTokens();
+    if (this.tokens >= 1) {
+      this.tokens -= 1;
+      return;
+    }
+    const waitMs = ((1 - this.tokens) / this.rateLimitConfig.requestsPerSecond) * 1000;
+    await new Promise(resolve => setTimeout(resolve, waitMs));
+    this.refillTokens();
+    this.tokens -= 1;
+  }
+
+  async launch(): Promise<void> {
+    if (this.browser) return;
     const { chromium } = await import('playwright');
     this.browser = await chromium.launch({
       headless: this.config.headless,
@@ -30,72 +61,141 @@ export class BrowserManager {
     });
   }
 
+  async checkRobots(url: string): Promise<boolean> {
+    const origin = new URL(url).origin;
+    if (!this.robotsCache.has(origin)) {
+      try {
+        const robotsUrl = `${origin}/robots.txt`;
+        const response = await fetch(robotsUrl, {
+          headers: { 'User-Agent': this.config.userAgent || 'WebContext/2.0' },
+        });
+        const body = response.ok ? await response.text() : '';
+        this.robotsCache.set(origin, robotsParser(robotsUrl, body));
+      } catch {
+        this.robotsCache.set(origin, robotsParser(`${origin}/robots.txt`, ''));
+      }
+    }
+    return this.robotsCache.get(origin)!.isAllowed(url, this.config.userAgent || '*') ?? true;
+  }
+
+  async fetchWithRetry<T>(fn: () => Promise<T>, retryConfig: RetryConfig = DEFAULT_RETRY): Promise<T> {
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (err: any) {
+        lastError = err;
+        if (attempt === retryConfig.maxRetries) break;
+        const delay = retryConfig.backoffMs * Math.pow(retryConfig.backoffMultiplier, attempt);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    throw lastError;
+  }
+
   async fetchPage(url: string, options: {
+    respectRobots?: boolean;
     waitForSelector?: string;
     timeout?: number;
     cookies?: Array<{ name: string; value: string; domain: string; path?: string }>;
     headers?: Record<string, string>;
-  } = {}): Promise<{ html: string; url: string; status: number }> {
-    if (!this.context) await this.initialize();
-
-    if (options.cookies?.length) {
-      await this.context.addCookies(options.cookies);
+    retryConfig?: RetryConfig;
+  } = {}): Promise<{ content: string; status: number }> {
+    if (options.respectRobots !== false) {
+      const allowed = await this.checkRobots(url);
+      if (!allowed) throw new Error(`Blocked by robots.txt: ${url}`);
     }
 
-    const page = await this.context.newPage();
-    if (options.headers) {
-      await page.setExtraHTTPHeaders(options.headers);
-    }
+    await this.waitForToken();
+    if (!this.context) await this.launch();
 
-    // Block unnecessary resources for speed
-    await page.route('**/*', (route: any) => {
-      const type = route.request().resourceType();
-      if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
-        route.abort();
-      } else {
-        route.continue();
+    return this.fetchWithRetry(async () => {
+      if (options.cookies?.length) {
+        await this.context.addCookies(options.cookies.map((c: any) => ({ ...c, path: c.path || '/' })));
       }
-    });
 
-    try {
-      const response = await page.goto(url, {
-        waitUntil: 'domcontentloaded',
-        timeout: options.timeout || 30000,
+      const page = await this.context.newPage();
+      if (options.headers) {
+        await page.setExtraHTTPHeaders(options.headers);
+      }
+
+      // Block unnecessary resources for speed
+      await page.route('**/*', (route: any) => {
+        const type = route.request().resourceType();
+        if (['image', 'media', 'font', 'stylesheet'].includes(type)) {
+          route.abort();
+        } else {
+          route.continue();
+        }
       });
 
-      if (options.waitForSelector) {
-        await page.waitForSelector(options.waitForSelector, { timeout: 10000 }).catch(() => {});
+      try {
+        const response = await page.goto(url, {
+          waitUntil: 'domcontentloaded',
+          timeout: options.timeout || 30000,
+        });
+
+        if (options.waitForSelector) {
+          await page.waitForSelector(options.waitForSelector, { timeout: 10000 }).catch(() => {});
+        }
+
+        // Wait for dynamic content
+        await page.waitForTimeout(1000);
+
+        const content = await page.content();
+        const status = response?.status() || 200;
+
+        // Throw on retryable status codes to trigger retry
+        if ((options.retryConfig?.retryOn || DEFAULT_RETRY.retryOn).includes(status)) {
+          throw new Error(`HTTP ${status}`);
+        }
+
+        return { content, status };
+      } finally {
+        await page.close();
       }
-
-      // Wait for dynamic content
-      await page.waitForTimeout(1000);
-
-      const html = await page.content();
-      const finalUrl = page.url();
-      const status = response?.status() || 200;
-
-      return { html, url: finalUrl, status };
-    } finally {
-      await page.close();
-    }
+    }, options.retryConfig);
   }
 
-  async fetchStatic(url: string, headers?: Record<string, string>): Promise<{ html: string; url: string; status: number }> {
-    const response = await fetch(url, {
-      headers: {
-        'User-Agent': this.config.userAgent || 'WebContext/1.0',
-        ...headers,
-      },
-    });
-    const html = await response.text();
-    return { html, url: response.url, status: response.status };
+  async fetchStatic(url: string, options: {
+    respectRobots?: boolean;
+    headers?: Record<string, string>;
+    retryConfig?: RetryConfig;
+  } = {}): Promise<{ body: Buffer; status: number }> {
+    if (options.respectRobots !== false) {
+      const allowed = await this.checkRobots(url);
+      if (!allowed) throw new Error(`Blocked by robots.txt: ${url}`);
+    }
+
+    await this.waitForToken();
+
+    return this.fetchWithRetry(async () => {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': this.config.userAgent || 'WebContext/2.0',
+          ...options.headers,
+        },
+      });
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const status = response.status;
+
+      if ((options.retryConfig?.retryOn || DEFAULT_RETRY.retryOn).includes(status)) {
+        throw new Error(`HTTP ${status}`);
+      }
+
+      return { body: buffer, status };
+    }, options.retryConfig);
   }
 
   async close(): Promise<void> {
+    if (this.context) {
+      await this.context.close();
+      this.context = null;
+    }
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
-      this.context = null;
     }
+    this.robotsCache.clear();
   }
 }
