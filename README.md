@@ -34,6 +34,13 @@ WebContext is a developer tool that crawls, extracts, cleans, and structures web
 npm install @sumeethmoolya/webcontext-ai
 ```
 
+> **Note:** WebContext works out of the box for most sites (server-rendered). For JavaScript-heavy SPAs, you also need Playwright:
+> ```bash
+> npm install playwright
+> npx playwright install chromium
+> ```
+> Then pass `{ javascript: true }` to enable browser rendering.
+
 ### CLI Usage
 
 ```bash

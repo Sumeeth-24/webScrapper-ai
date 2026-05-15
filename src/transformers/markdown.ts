@@ -165,6 +165,12 @@ export class MarkdownTransformer {
       .replace(/\n{3,}/g, '\n\n')
       // Remove trailing whitespace
       .replace(/[ \t]+$/gm, '')
+      // Remove paragraph anchors (¶, #, permalink markers)
+      .replace(/[¶]/g, '')
+      .replace(/\[¶\]\([^)]*\)/g, '')
+      .replace(/\[Link to this [^\]]*\]/g, '')
+      // Clean heading anchor links like "## Title[¶](#anchor "tooltip")"
+      .replace(/(#{1,6}\s+[^[]+)\[.*?\]\(#[^)]*\)/g, '$1')
       // Ensure headings have blank line before
       .replace(/([^\n])\n(#{1,6} )/g, '$1\n\n$2')
       // Clean up excessive escaping
@@ -196,7 +202,7 @@ export class MarkdownTransformer {
    * Builds a 2D grid from a table, expanding colspan/rowspan into repeated cells.
    */
   private buildTableGrid(table: HTMLElement): string[][] {
-    const rows = table.querySelectorAll('tr');
+    const rows = Array.from(table.querySelectorAll('tr'));
     const grid: string[][] = [];
     const rowspanTracker: Map<number, { value: string; remaining: number }[]> = new Map();
 
@@ -219,7 +225,7 @@ export class MarkdownTransformer {
         }
       }
 
-      tr.querySelectorAll('th, td').forEach((cell) => {
+      Array.from(tr.querySelectorAll('th, td')).forEach((cell) => {
         // Skip past already-filled positions
         while (grid[rowIdx][colIdx] !== undefined) colIdx++;
 

@@ -20,7 +20,7 @@ export class BrowserManager {
   constructor(config: BrowserConfig = {}, rateLimitConfig?: RateLimitConfig) {
     this.config = {
       headless: true,
-      userAgent: 'WebContext/2.0 (AI Context Crawler)',
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
       viewport: { width: 1280, height: 720 },
       ...config,
     };
@@ -50,7 +50,17 @@ export class BrowserManager {
 
   async launch(): Promise<void> {
     if (this.browser) return;
-    const { chromium } = await import('playwright');
+    let chromium: any;
+    try {
+      const pw = await import('playwright');
+      chromium = pw.chromium;
+    } catch {
+      throw new Error(
+        'Playwright is required for JavaScript rendering but is not installed.\n' +
+        'Install it with: npm install playwright && npx playwright install chromium\n' +
+        'Or use { javascript: false } to extract without a browser.'
+      );
+    }
     this.browser = await chromium.launch({
       headless: this.config.headless,
       args: this.config.proxy ? [`--proxy-server=${this.config.proxy}`] : [],
@@ -67,7 +77,8 @@ export class BrowserManager {
       try {
         const robotsUrl = `${origin}/robots.txt`;
         const response = await fetch(robotsUrl, {
-          headers: { 'User-Agent': this.config.userAgent || 'WebContext/2.0' },
+          headers: { 'User-Agent': this.config.userAgent || 'Mozilla/5.0' },
+          signal: AbortSignal.timeout(5000),
         });
         const body = response.ok ? await response.text() : '';
         this.robotsCache.set(origin, robotsParser(robotsUrl, body));
@@ -175,6 +186,7 @@ export class BrowserManager {
           'User-Agent': this.config.userAgent || 'WebContext/2.0',
           ...options.headers,
         },
+        signal: AbortSignal.timeout(30000),
       });
       const buffer = Buffer.from(await response.arrayBuffer());
       const status = response.status;

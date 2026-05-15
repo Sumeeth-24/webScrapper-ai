@@ -74,8 +74,10 @@ export class CrawlPipeline {
       queue = checkpoint?.pendingUrls ?? [options.url];
     }
 
-    // Initialize browser
-    await this.browser.launch();
+    // Initialize browser only if JS rendering is explicitly requested
+    if (options.javascript === true) {
+      await this.browser.launch();
+    }
 
     const concurrency = this.config.concurrency ?? 3;
     const pQueue = new PQueue({ concurrency });
@@ -128,7 +130,7 @@ export class CrawlPipeline {
         // Fetch page
         let html: string;
         let status: number;
-        if (options.javascript !== false) {
+        if (options.javascript === true) {
           const result = await this.browser.fetchPage(url, {
             respectRobots: options.respectRobotsTxt,
             cookies: options.cookies,
