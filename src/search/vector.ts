@@ -25,6 +25,7 @@ export class VectorSearch {
   private embeddings: EmbeddingResult[] = [];
   private vocabulary: Map<string, number> = new Map();
   private idfScores: Map<string, number> = new Map();
+  private docFrequency: Map<string, number> = new Map();
 
   /** Index chunks for search */
   index(chunks: ContentChunk[]): void {
@@ -60,27 +61,29 @@ export class VectorSearch {
       .slice(0, topK);
   }
 
-  /** Add a single chunk to the index */
+  /** Add a single chunk to the index and recompute IDF from actual document frequencies */
   addChunk(chunk: ContentChunk): void {
     const tokens = this.tokenize(chunk.content);
-    const N = this.embeddings.length + 1;
+    const newTerms = new Set(tokens);
 
-    for (const term of new Set(tokens)) {
+    // Register new terms in vocabulary
+    for (const term of newTerms) {
       if (!this.vocabulary.has(term)) {
         this.vocabulary.set(term, this.vocabulary.size);
       }
-      const prevDf = this.idfScores.has(term)
-        ? Math.round(N / Math.exp(this.idfScores.get(term)!))
-        : 0;
-      this.idfScores.set(term, Math.log(N / (prevDf + 1)));
     }
 
-    // Recompute IDF for all terms
+    // Track document frequency accurately
+    for (const term of newTerms) {
+      this.docFrequency.set(term, (this.docFrequency.get(term) || 0) + 1);
+    }
+
+    const N = this.embeddings.length + 1;
+
+    // Recompute IDF for all terms using exact document frequencies
     for (const [term] of this.vocabulary) {
-      if (!new Set(tokens).has(term)) {
-        const prevDf = Math.round((this.embeddings.length) / Math.exp(this.idfScores.get(term) || 0));
-        this.idfScores.set(term, Math.log(N / Math.max(prevDf, 1)));
-      }
+      const df = this.docFrequency.get(term) || 1;
+      this.idfScores.set(term, Math.log(N / df));
     }
 
     const vector = this.computeTfIdf(tokens);
@@ -93,6 +96,7 @@ export class VectorSearch {
     this.embeddings = [];
     this.vocabulary.clear();
     this.idfScores.clear();
+    this.docFrequency.clear();
   }
 
   /** Get index size */

@@ -72,8 +72,9 @@ export class WebContext {
 
   /** Extract and return a context packet optimized for LLM consumption */
   async toContext(url: string, options: Partial<CrawlOptions> & { maxTokens?: number } = {}): Promise<string> {
-    const result = await this.extract(url, options);
-    return this.formatForLLM(result.context, options.maxTokens);
+    const { maxTokens, ...crawlOptions } = options;
+    const result = await this.extract(url, crawlOptions);
+    return this.formatForLLM(result.context, maxTokens);
   }
 
   /** Semantic search within a page's content */

@@ -126,21 +126,26 @@ export class CrawlPipeline {
         }
 
         // Fetch page
-        const fetchResult = options.javascript !== false
-          ? await this.browser.fetchPage(url, {
-              respectRobots: options.respectRobotsTxt,
-              cookies: options.cookies,
-              headers: options.headers,
-              retryConfig: options.retry,
-            })
-          : await this.browser.fetchStatic(url, {
-              respectRobots: options.respectRobotsTxt,
-              headers: options.headers,
-              retryConfig: options.retry,
-            });
-
-        const html = 'content' in fetchResult ? fetchResult.content : fetchResult.body.toString('utf-8');
-        const status = fetchResult.status;
+        let html: string;
+        let status: number;
+        if (options.javascript !== false) {
+          const result = await this.browser.fetchPage(url, {
+            respectRobots: options.respectRobotsTxt,
+            cookies: options.cookies,
+            headers: options.headers,
+            retryConfig: options.retry,
+          });
+          html = result.content;
+          status = result.status;
+        } else {
+          const result = await this.browser.fetchStatic(url, {
+            respectRobots: options.respectRobotsTxt,
+            headers: options.headers,
+            retryConfig: options.retry,
+          });
+          html = result.body.toString('utf-8');
+          status = result.status;
+        }
 
         if (status >= 400) {
           errors.push({ url, error: `HTTP ${status}`, statusCode: status });

@@ -31,12 +31,28 @@ export class CrawlScheduler {
 
   listJobs(): string[] { return [...this.jobs.keys()]; }
 
+  /**
+   * Parse a cron expression into a millisecond interval.
+   * Supports: *\/N for minutes/hours, day-of-week specific (runs daily),
+   * and common patterns. Falls back to 1 hour for unsupported expressions.
+   */
   private cronToInterval(cron: string): number {
-    const [minute, hour] = cron.split(' ');
-    if (hour.startsWith('*/')) return parseInt(hour.slice(2)) * 60 * 60 * 1000;
+    const parts = cron.trim().split(/\s+/);
+    if (parts.length < 5) return 60 * 60 * 1000; // fallback: 1 hour
+
+    const [minute, hour, dayOfMonth, , dayOfWeek] = parts;
+
+    // */N minutes (e.g., "*/5 * * * *" = every 5 min)
     if (minute.startsWith('*/')) return parseInt(minute.slice(2)) * 60 * 1000;
-    if (minute === '0' && hour === '0') return 24 * 60 * 60 * 1000;
-    if (minute === '0' && hour === '*') return 60 * 60 * 1000;
-    return 60 * 60 * 1000;
+    // */N hours (e.g., "0 */2 * * *" = every 2 hours)
+    if (hour.startsWith('*/')) return parseInt(hour.slice(2)) * 60 * 60 * 1000;
+    // Daily at specific time (e.g., "0 9 * * *" or "0 9 * * MON")
+    if (minute !== '*' && hour !== '*' && dayOfMonth === '*') return 24 * 60 * 60 * 1000;
+    // Every hour (e.g., "0 * * * *")
+    if (minute !== '*' && hour === '*') return 60 * 60 * 1000;
+    // Every minute ("* * * * *")
+    if (minute === '*') return 60 * 1000;
+
+    return 60 * 60 * 1000; // fallback: 1 hour
   }
 }
