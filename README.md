@@ -131,16 +131,70 @@ const docs = await loader.load('https://docs.example.com/guide');
 
 ### MCP Tools (AI Agent Integration)
 
+Use WebContext as a tool inside **Cursor**, **Claude Desktop**, **Amazon Q Developer**, or any MCP-compatible AI agent.
+
+#### Setup for Claude Desktop
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "webcontext": {
+      "command": "node",
+      "args": ["C:/path/to/node_modules/@sumeethmoolya/webcontext-ai/dist/mcp-server.js"]
+    }
+  }
+}
+```
+
+#### Setup for Cursor
+
+Add to `.cursor/mcp.json` in your project:
+
+```json
+{
+  "mcpServers": {
+    "webcontext": {
+      "command": "npx",
+      "args": ["-y", "@sumeethmoolya/webcontext-ai", "webcontext-mcp"]
+    }
+  }
+}
+```
+
+#### Setup for Amazon Q Developer
+
+Add to your MCP configuration:
+
+```json
+{
+  "mcpServers": {
+    "webcontext": {
+      "command": "npx",
+      "args": ["-y", "@sumeethmoolya/webcontext-ai", "webcontext-mcp"]
+    }
+  }
+}
+```
+
+#### Available MCP Tools
+
+Once configured, your AI agent can use these tools:
+
+| Tool | Description | Example Prompt |
+|------|-------------|----------------|
+| `webcontext_extract` | Extract clean content from a URL | "Extract the React docs for useState" |
+| `webcontext_crawl` | Crawl a documentation site | "Crawl the Express.js guide, 3 levels deep" |
+| `webcontext_search` | Semantic search within a page | "Search the Next.js docs for 'server components'" |
+| `webcontext_chunk` | Get RAG-ready chunks | "Chunk the TailwindCSS docs for my vector DB" |
+| `webcontext_summarize` | Summarize a web page | "Summarize this API reference page" |
+
 ```typescript
+// Programmatic MCP setup (for custom integrations)
 import { createMCPTools } from '@sumeethmoolya/webcontext-ai/sdk/mcp';
 
 const tools = createMCPTools();
-// Available tools:
-// - webcontext_extract: Extract content from URL
-// - webcontext_crawl: Crawl documentation site
-// - webcontext_search: Semantic search within content
-// - webcontext_chunk: Get RAG-ready chunks
-// - webcontext_summarize: Get extractive summary
 ```
 
 ### Plugin System
@@ -370,6 +424,104 @@ Automatically detects: Python, TypeScript, JavaScript, Go, Rust, Java, C#, Kotli
 - Cache stored locally with configurable TTL
 - Input validation on all public APIs
 - User-agent clearly identifies as a bot
+
+## Real-World Examples
+
+### Feed documentation into your AI chatbot
+
+```typescript
+import { WebContext } from '@sumeethmoolya/webcontext-ai';
+
+const wc = new WebContext();
+
+// Crawl your product docs and get chunks for a vector database
+const result = await wc.crawlDocs('https://your-docs.com', { depth: 3, maxPages: 100 });
+
+// Upload chunks to Pinecone, Chroma, Weaviate, etc.
+for (const chunk of result.context.chunks) {
+  await vectorDB.upsert({
+    id: chunk.id,
+    content: chunk.content,
+    metadata: chunk.metadata,
+  });
+}
+```
+
+### Keep AI context fresh with scheduled re-crawls
+
+```typescript
+import { WebContext, CrawlScheduler } from '@sumeethmoolya/webcontext-ai';
+
+const wc = new WebContext();
+const scheduler = new CrawlScheduler();
+
+// Re-crawl every 6 hours and update your vector DB
+scheduler.schedule('docs-sync', {
+  cron: '0 */6 * * *',
+  urls: ['https://your-docs.com'],
+  options: { depth: 2 },
+  onComplete: async (result) => {
+    // result.diffs tells you what changed
+    if (result.diffs?.length) {
+      console.log(`${result.diffs.length} pages changed — updating index`);
+      // Re-index only changed content
+    }
+  },
+}, (url, opts) => wc.crawlDocs(url, opts));
+```
+
+### Use in a Cursor/Claude workflow
+
+Just ask your AI agent:
+- *"Use webcontext to extract the Next.js App Router docs and explain how layouts work"*
+- *"Crawl the Stripe API reference and summarize the payment intents section"*
+- *"Search the React docs for information about useEffect cleanup"*
+
+The agent calls the MCP tools automatically — no code needed from you.
+
+## Troubleshooting
+
+### "Executable doesn't exist" / Playwright errors
+
+Playwright is only needed for JavaScript-heavy SPAs. Most sites work without it.
+
+```bash
+# If you need browser rendering:
+npm install playwright
+npx playwright install chromium
+```
+
+Then use `{ javascript: true }` in your options.
+
+### "fetch failed" / SSL certificate errors
+
+Common in corporate environments with proxy/firewall:
+
+```bash
+# Temporary fix (current terminal session only):
+set NODE_TLS_REJECT_UNAUTHORIZED=0    # Windows
+export NODE_TLS_REJECT_UNAUTHORIZED=0  # Mac/Linux
+```
+
+If behind a corporate proxy:
+```bash
+set HTTPS_PROXY=http://your-proxy:8080
+```
+
+### Empty extraction / "No pages extracted"
+
+1. **SPA sites** (React/Vue/Angular apps) need `{ javascript: true }` + Playwright
+2. **Landing pages** have little content — target specific doc pages instead
+3. **Blocked by WAF** — some CDNs block automated requests. Try with custom headers:
+   ```typescript
+   wc.extract(url, { headers: { 'Accept': 'text/html' } });
+   ```
+
+### Slow extraction
+
+- Use `{ javascript: false }` (default) when possible — 10x faster than browser rendering
+- Reduce `maxPages` and `depth` for crawls
+- Enable caching: `{ cache: { enabled: true, ttl: 3600 } }`
 
 ## License
 
