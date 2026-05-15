@@ -13,7 +13,7 @@ const program = new Command();
 program
   .name('webcontext')
   .description('Turn any web content into clean AI-ready context')
-  .version('2.1.0');
+  .version('1.0.0');
 
 program
   .command('extract')

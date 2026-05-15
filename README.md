@@ -40,7 +40,7 @@ WebContext is a developer tool that crawls, extracts, cleans, and structures web
 ## Quick Start
 
 ```bash
-npm install @sumeethmoolya/webcontext-ai
+npm install webcontext-ai
 ```
 
 > **Note:** WebContext works out of the box for most sites (server-rendered). For JavaScript-heavy SPAs, you also need Playwright:
@@ -98,7 +98,7 @@ webcontext serve --port 3456
 ## SDK Usage
 
 ```typescript
-import { WebContext } from '@sumeethmoolya/webcontext-ai';
+import { WebContext } from 'webcontext-ai';
 
 const wc = new WebContext({
   cache: { enabled: true, ttl: 3600, maxSize: 500, contentHashing: true },
@@ -160,7 +160,7 @@ wc.dispose();
 Export chunks in formats ready for direct import into popular vector databases:
 
 ```typescript
-import { WebContext } from '@sumeethmoolya/webcontext-ai';
+import { WebContext } from 'webcontext-ai';
 
 const wc = new WebContext();
 const result = await wc.extract('https://docs.example.com');
@@ -185,7 +185,7 @@ webcontext export https://docs.example.com --to chroma --namespace docs -o chrom
 Format extracted content using built-in or custom templates:
 
 ```typescript
-import { OutputFormatter } from '@sumeethmoolya/webcontext-ai';
+import { OutputFormatter } from 'webcontext-ai';
 
 const fmt = new OutputFormatter();
 
@@ -217,7 +217,7 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "webcontext": {
       "command": "npx",
-      "args": ["-y", "@sumeethmoolya/webcontext-ai", "webcontext-mcp"]
+      "args": ["-y", "webcontext-ai", "webcontext-mcp"]
     }
   }
 }
@@ -232,7 +232,7 @@ Add to `.cursor/mcp.json` in your project:
   "mcpServers": {
     "webcontext": {
       "command": "npx",
-      "args": ["-y", "@sumeethmoolya/webcontext-ai", "webcontext-mcp"]
+      "args": ["-y", "webcontext-ai", "webcontext-mcp"]
     }
   }
 }
@@ -247,7 +247,7 @@ Add to your MCP configuration:
   "mcpServers": {
     "webcontext": {
       "command": "npx",
-      "args": ["-y", "@sumeethmoolya/webcontext-ai", "webcontext-mcp"]
+      "args": ["-y", "webcontext-ai", "webcontext-mcp"]
     }
   }
 }
@@ -352,7 +352,7 @@ Webhook payload example:
 ## Client SDK (Remote Server)
 
 ```typescript
-import { WebContextClient } from '@sumeethmoolya/webcontext-ai/sdk/client';
+import { WebContextClient } from 'webcontext-ai/sdk/client';
 
 const client = new WebContextClient({ serverUrl: 'http://localhost:3456' });
 const markdown = await client.toMarkdown('https://example.com');
@@ -362,7 +362,7 @@ const results = await client.search('https://example.com', 'pricing', 3);
 ## LangChain Integration
 
 ```typescript
-import { WebContextLoader } from '@sumeethmoolya/webcontext-ai/sdk/client';
+import { WebContextLoader } from 'webcontext-ai/sdk/client';
 
 const loader = new WebContextLoader();
 const docs = await loader.load('https://docs.example.com/guide');
@@ -372,7 +372,7 @@ const docs = await loader.load('https://docs.example.com/guide');
 ## Plugin System
 
 ```typescript
-import { WebContext, WebContextPlugin } from '@sumeethmoolya/webcontext-ai';
+import { WebContext, WebContextPlugin } from 'webcontext-ai';
 
 const myPlugin: WebContextPlugin = {
   name: 'custom-cleaner',
@@ -460,7 +460,7 @@ const wc = new WebContext({
 ### Feed documentation into your AI chatbot (RAG)
 
 ```typescript
-import { WebContext } from '@sumeethmoolya/webcontext-ai';
+import { WebContext } from 'webcontext-ai';
 
 const wc = new WebContext();
 const result = await wc.crawlDocs('https://your-docs.com', { depth: 3, maxPages: 100 });
@@ -476,7 +476,7 @@ const pineconeData = await wc.exportForVectorDB('https://your-docs.com', {
 ### Keep AI context fresh with scheduled re-crawls
 
 ```typescript
-import { WebContext, CrawlScheduler } from '@sumeethmoolya/webcontext-ai';
+import { WebContext, CrawlScheduler } from 'webcontext-ai';
 
 const wc = new WebContext();
 const scheduler = new CrawlScheduler();

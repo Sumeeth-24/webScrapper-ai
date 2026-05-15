@@ -1,6 +1,6 @@
 {
-  "name": "@sumeethmoolya/webcontext-ai",
-  "version": "2.1.0",
+  "name": "webcontext-ai",
+  "version": "1.0.0",
   "description": "Turn any web content into clean AI-ready context — with crawling, chunking, semantic search, and MCP tools",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

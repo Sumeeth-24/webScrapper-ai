@@ -30,7 +30,7 @@ export function startServer(port: number = 3456): void {
   });
 
   app.get('/health', (_req: Request, res: Response) => {
-    res.json({ status: 'ok', version: '2.1.0' });
+    res.json({ status: 'ok', version: '1.0.0' });
   });
 
   // Extract single URL
