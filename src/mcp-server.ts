@@ -18,7 +18,7 @@ const tools = createMCPTools({
 // MCP stdio protocol implementation
 const server = {
   name: 'webcontext',
-  version: '2.0.0',
+  version: '2.1.0',
   tools: tools.map(t => ({
     name: t.name,
     description: t.description,

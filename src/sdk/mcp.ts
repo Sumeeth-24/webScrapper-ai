@@ -113,5 +113,44 @@ export function createMCPTools(config?: any): MCPTool[] {
         };
       },
     },
+    {
+      name: 'webcontext_github',
+      description: 'Extract README and docs from a GitHub repository.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'GitHub repository URL (e.g., https://github.com/user/repo)' },
+          includeDocs: { type: 'boolean', description: 'Also extract /docs folder (default: true)' },
+        },
+        required: ['url'],
+      },
+      handler: async (input: { url: string; includeDocs?: boolean }) => {
+        const result = await wc.extractGitHub(input.url, { depth: input.includeDocs !== false ? 1 : 0 });
+        return {
+          pages: result.pages.map(p => ({ title: p.title, url: p.url, markdown: p.markdown.slice(0, 3000) })),
+          stats: result.stats,
+        };
+      },
+    },
+    {
+      name: 'webcontext_pdf',
+      description: 'Extract text content from a PDF file (URL or local path).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          source: { type: 'string', description: 'PDF URL or local file path' },
+        },
+        required: ['source'],
+      },
+      handler: async (input: { source: string }) => {
+        const result = await wc.extractPdf(input.source);
+        return {
+          title: result.pages[0]?.title,
+          markdown: result.pages[0]?.markdown.slice(0, 5000),
+          chunks: result.context.chunks.length,
+          totalTokens: result.stats.totalTokens,
+        };
+      },
+    },
   ];
 }

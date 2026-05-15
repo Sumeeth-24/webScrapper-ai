@@ -1,14 +1,22 @@
 export * from './core/types';
 export { CrawlPipeline } from './core/pipeline';
+export { CrawlStream } from './core/stream';
 export { BrowserManager } from './browser/manager';
 export { ContentExtractor } from './extractors/content';
+export { PdfExtractor } from './extractors/pdf';
+export { GitHubExtractor } from './extractors/github';
+export { ImageExtractor } from './extractors/images';
+export { ScreenshotCapture } from './extractors/screenshot';
 export { MarkdownTransformer } from './transformers/markdown';
 export { ContentChunker } from './chunking/chunker';
 export { CrawlCache } from './cache/cache';
 export { VectorSearch } from './search/vector';
+export { VectorDBExporter, VectorDBExportOptions, OutputFormatter, OutputTemplate } from './export';
 export { SitemapParser } from './utils/sitemap';
 export { MetricsCollector } from './utils/metrics';
 export { CrawlScheduler } from './utils/scheduler';
+export { Deduplicator } from './utils/dedup';
+export { WebhookNotifier, WebhookConfig } from './utils/webhook';
 export { validateUrl, validateCrawlOptions } from './utils/validation';
 
 import {
@@ -16,7 +24,10 @@ import {
   ContextPacket, SearchResult, MetricsData,
 } from './core/types';
 import { CrawlPipeline } from './core/pipeline';
+import { CrawlStream } from './core/stream';
 import { VectorSearch } from './search/vector';
+import { VectorDBExporter, VectorDBExportOptions } from './export';
+import { WebhookNotifier, WebhookConfig } from './utils/webhook';
 import { MetricsCollector } from './utils/metrics';
 import { validateUrl } from './utils/validation';
 
@@ -27,6 +38,7 @@ export class WebContext {
   private pipeline: CrawlPipeline;
   private vectorSearch: VectorSearch;
   private metrics: MetricsCollector | null;
+  private webhooks: WebhookNotifier | null = null;
   private config: WebContextConfig;
 
   constructor(config: WebContextConfig = {}) {
@@ -87,12 +99,57 @@ export class WebContext {
   /** Extract GitHub README */
   async extractReadme(repoUrl: string): Promise<CrawlResult> {
     validateUrl(repoUrl);
-    return this.extract(repoUrl.replace(/\/$/, ''), { focusMode: 'readme' });
+    return this.extract(repoUrl.replace(/\/$/, ''));
+  }
+
+  /** Extract GitHub repo with docs */
+  async extractGitHub(repoUrl: string, options: Partial<CrawlOptions> = {}): Promise<CrawlResult> {
+    return this.crawlDocs(repoUrl, { depth: 1, ...options });
+  }
+
+  /** Extract content from a PDF (URL or local path) */
+  async extractPdf(source: string): Promise<CrawlResult> {
+    if (source.startsWith('http')) {
+      return this.extract(source);
+    }
+    // Local file — bypass URL validation, call pipeline directly
+    const result = await this.pipeline.crawl({ url: source, depth: 0 });
+    return result;
   }
 
   /** Extract API reference */
   async extractAPI(url: string): Promise<CrawlResult> {
     return this.extract(url, { focusMode: 'api' });
+  }
+
+  /** Export chunks in vector DB format */
+  async exportForVectorDB(url: string, options: VectorDBExportOptions & Partial<CrawlOptions> = { format: 'json' }): Promise<string> {
+    const { format, namespace, collection, includeMetadata, ...crawlOptions } = options;
+    const result = await this.extract(url, crawlOptions);
+    const exporter = new VectorDBExporter();
+    return exporter.exportChunks(result.context.chunks, { format, namespace, collection, includeMetadata });
+  }
+
+  /** Stream crawl results in real-time */
+  extractStream(url: string, options: Partial<CrawlOptions> = {}): CrawlStream {
+    const stream = new CrawlStream();
+    validateUrl(url);
+    // Run crawl async and emit events
+    this.pipeline.crawl({ url, depth: 0, ...options, onProgress: (p) => stream.emitProgress(p) })
+      .then((result) => {
+        for (const page of result.pages) stream.emitPage(page);
+        stream.emitChunks(result.context.chunks);
+        if (result.diffs?.length) stream.emitDone(result);
+        else stream.emitDone(result);
+      })
+      .catch((err) => stream.emitError({ url, error: err.message }));
+    return stream;
+  }
+
+  /** Register a webhook for crawl notifications */
+  registerWebhook(config: WebhookConfig): void {
+    if (!this.webhooks) this.webhooks = new WebhookNotifier();
+    this.webhooks.register(config);
   }
 
   /** Get collected metrics */

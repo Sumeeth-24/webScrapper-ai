@@ -1,6 +1,6 @@
 {
   "name": "@sumeethmoolya/webcontext-ai",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Turn any web content into clean AI-ready context — with crawling, chunking, semantic search, and MCP tools",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -28,6 +28,10 @@
     "./utils": {
       "types": "./dist/utils/index.d.ts",
       "require": "./dist/utils/index.js"
+    },
+    "./export": {
+      "types": "./dist/export/index.d.ts",
+      "require": "./dist/export/index.js"
     }
   },
   "files": [
@@ -61,7 +65,10 @@
     "tfidf",
     "semantic-search",
     "mcp-server",
-    "langchain"
+    "langchain",
+    "pdf-extraction",
+    "github",
+    "deduplication"
   ],
   "author": "sumeethmoolya",
   "repository": {
@@ -85,7 +92,8 @@
     "cors": "2.8.5"
   },
   "optionalDependencies": {
-    "playwright": "1.44.0"
+    "playwright": "1.44.0",
+    "pdf-parse": "1.1.1"
   },
   "devDependencies": {
     "typescript": "5.4.5",

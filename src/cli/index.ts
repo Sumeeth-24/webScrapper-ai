@@ -3,7 +3,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import { WebContext } from '../index';
-import { VectorSearch } from '../search/vector';
+import { VectorDBExporter } from '../export/vectordb';
 import { CrawlScheduler } from '../utils/scheduler';
 import { validateUrl } from '../utils/validation';
 import { writeFileSync, mkdirSync } from 'fs';
@@ -13,7 +13,7 @@ const program = new Command();
 program
   .name('webcontext')
   .description('Turn any web content into clean AI-ready context')
-  .version('2.0.0');
+  .version('2.1.0');
 
 program
   .command('extract')
@@ -253,6 +253,140 @@ program
   .action(async (opts) => {
     const { startServer } = await import('../sdk/server');
     startServer(parseInt(opts.port));
+  });
+
+program
+  .command('github')
+  .description('Extract README and docs from a GitHub repository')
+  .argument('<url>', 'GitHub repository URL')
+  .option('-f, --format <format>', 'Output format: markdown|json', 'markdown')
+  .option('-o, --output <file>', 'Output file path')
+  .option('--docs-only', 'Only extract /docs folder, skip README')
+  .action(async (url: string, opts) => {
+    try {
+      const spinner = ora(`Extracting GitHub repo: ${url}`).start();
+      const wc = new WebContext();
+      const result = await wc.extractGitHub(url, { depth: opts.docsOnly ? 1 : 1 });
+      spinner.succeed(`${result.stats.pagesProcessed} files | ${result.stats.totalTokens} tokens`);
+
+      const output = opts.format === 'json'
+        ? JSON.stringify(result.context, null, 2)
+        : result.pages.map(p => `# ${p.title}\n\n${p.markdown}`).join('\n\n---\n\n');
+
+      if (opts.output) {
+        writeFileSync(opts.output, output);
+        console.log(chalk.green(`✓ Written to ${opts.output}`));
+      } else {
+        console.log(output);
+      }
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('pdf')
+  .description('Extract content from a PDF file')
+  .argument('<source>', 'PDF URL or local file path')
+  .option('-f, --format <format>', 'Output format: markdown|json|chunks', 'markdown')
+  .option('-o, --output <file>', 'Output file path')
+  .action(async (source: string, opts) => {
+    try {
+      const spinner = ora(`Extracting PDF: ${source}`).start();
+      const wc = new WebContext();
+      const result = await wc.extractPdf(source);
+      spinner.succeed(`Extracted ${result.stats.totalTokens} tokens from PDF`);
+
+      let output: string;
+      switch (opts.format) {
+        case 'json':
+          output = JSON.stringify(result.context, null, 2);
+          break;
+        case 'chunks':
+          output = JSON.stringify(result.context.chunks, null, 2);
+          break;
+        default:
+          output = result.pages[0]?.markdown || '';
+      }
+
+      if (opts.output) {
+        writeFileSync(opts.output, output);
+        console.log(chalk.green(`✓ Written to ${opts.output}`));
+      } else {
+        console.log(output);
+      }
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('export')
+  .description('Export content as vector DB-ready format')
+  .argument('<url>', 'URL to extract and export')
+  .requiredOption('--to <format>', 'Target format: pinecone|chroma|weaviate|qdrant|json')
+  .option('-o, --output <file>', 'Output file path')
+  .option('--namespace <ns>', 'Namespace/collection name')
+  .option('-d, --depth <n>', 'Crawl depth', '0')
+  .option('-m, --max-pages <n>', 'Max pages', '20')
+  .action(async (url: string, opts) => {
+    try {
+      validateUrl(url);
+      const spinner = ora(`Extracting and exporting to ${opts.to} format...`).start();
+      const wc = new WebContext();
+      const result = parseInt(opts.depth) > 0
+        ? await wc.crawlDocs(url, { depth: parseInt(opts.depth), maxPages: parseInt(opts.maxPages) })
+        : await wc.extract(url);
+
+      const exporter = new VectorDBExporter();
+      const output = exporter.exportChunks(result.context.chunks, {
+        format: opts.to,
+        namespace: opts.namespace,
+        collection: opts.namespace,
+      });
+
+      spinner.succeed(`Exported ${result.context.chunks.length} chunks in ${opts.to} format`);
+
+      if (opts.output) {
+        writeFileSync(opts.output, output);
+        console.log(chalk.green(`✓ Written to ${opts.output}`));
+      } else {
+        console.log(output);
+      }
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`));
+      process.exit(1);
+    }
+  });
+
+program
+  .command('screenshot')
+  .description('Capture a screenshot of a web page')
+  .argument('<url>', 'URL to screenshot')
+  .option('-o, --output <dir>', 'Output directory', './screenshots')
+  .option('--full-page', 'Capture full page (not just viewport)')
+  .option('--width <px>', 'Viewport width', '1280')
+  .option('--height <px>', 'Viewport height', '720')
+  .option('--format <fmt>', 'Image format: png|jpeg', 'png')
+  .action(async (url: string, opts) => {
+    try {
+      validateUrl(url);
+      const spinner = ora(`Capturing screenshot: ${url}`).start();
+      const { ScreenshotCapture } = await import('../extractors/screenshot');
+      const capture = new ScreenshotCapture(opts.output);
+      const filepath = await capture.capture(url, {
+        fullPage: opts.fullPage,
+        width: parseInt(opts.width),
+        height: parseInt(opts.height),
+        format: opts.format,
+      });
+      spinner.succeed(`Screenshot saved: ${filepath}`);
+    } catch (err: any) {
+      console.error(chalk.red(`Error: ${err.message}`));
+      process.exit(1);
+    }
   });
 
 program.parse();

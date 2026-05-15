@@ -5,9 +5,13 @@ import {
 } from './types';
 import { BrowserManager } from '../browser/manager';
 import { ContentExtractor } from '../extractors/content';
+import { PdfExtractor } from '../extractors/pdf';
+import { GitHubExtractor } from '../extractors/github';
 import { MarkdownTransformer } from '../transformers/markdown';
 import { ContentChunker } from '../chunking/chunker';
 import { CrawlCache } from '../cache/cache';
+import { SitemapParser } from '../utils/sitemap';
+import { Deduplicator } from '../utils/dedup';
 import PQueue from 'p-queue';
 import { createHash } from 'crypto';
 import * as cheerio from 'cheerio';
@@ -21,15 +25,21 @@ import { join } from 'path';
 export class CrawlPipeline {
   private browser: BrowserManager;
   private extractor: ContentExtractor;
+  private pdfExtractor: PdfExtractor;
+  private githubExtractor: GitHubExtractor;
   private transformer: MarkdownTransformer;
   private chunker: ContentChunker;
   private cache: CrawlCache;
+  private sitemapParser: SitemapParser;
+  private dedup: Deduplicator;
   private config: WebContextConfig;
 
   constructor(config: WebContextConfig = {}) {
     this.config = config;
     this.browser = new BrowserManager(config.browser, config.rateLimit);
     this.extractor = new ContentExtractor();
+    this.pdfExtractor = new PdfExtractor();
+    this.githubExtractor = new GitHubExtractor();
     this.transformer = new MarkdownTransformer({
       preserveImages: config.extraction?.preserveImages,
     });
@@ -41,6 +51,8 @@ export class CrawlPipeline {
       directory: config.cache?.directory,
       contentHashing: config.cache?.contentHashing ?? true,
     });
+    this.sitemapParser = new SitemapParser();
+    this.dedup = new Deduplicator();
   }
 
   async crawl(options: CrawlOptions): Promise<CrawlResult> {
@@ -70,8 +82,31 @@ export class CrawlPipeline {
     let queue: string[] = [];
     if (options.sitemapUrl) {
       queue = await this.parseSitemap(options.sitemapUrl);
+    } else if (checkpoint?.pendingUrls?.length) {
+      queue = checkpoint.pendingUrls;
     } else {
-      queue = checkpoint?.pendingUrls ?? [options.url];
+      // Auto-discover sitemap before crawling
+      if (depth > 0) {
+        const sitemapUrl = await this.sitemapParser.discover(options.url).catch(() => null);
+        if (sitemapUrl) {
+          const entries = await this.sitemapParser.parse(sitemapUrl).catch(() => []);
+          if (entries.length > 0) {
+            queue = entries
+              .map(e => e.url)
+              .filter(u => this.matchesPatterns(u, options.includePatterns, options.excludePatterns))
+              .slice(0, maxPages);
+          }
+        }
+      }
+      if (!queue.length) queue = [options.url];
+    }
+
+    // Handle special sources: PDF and GitHub
+    if (this.pdfExtractor.isPdf(options.url)) {
+      return this.handlePdf(options, startTime);
+    }
+    if (this.githubExtractor.isGitHubUrl(options.url)) {
+      return this.handleGitHub(options, startTime);
     }
 
     // Initialize browser only if JS rendering is explicitly requested
@@ -177,6 +212,15 @@ export class CrawlPipeline {
         // Run post-transform plugins
         ctx = await this.runPlugins('post-transform', { ...ctx, markdown: finalExtracted.markdown }, options.plugins);
         if (ctx.markdown) finalExtracted.markdown = ctx.markdown;
+
+        // Resolve relative links to absolute URLs
+        finalExtracted.markdown = this.resolveLinks(finalExtracted.markdown, url);
+
+        // Deduplication check
+        const dupOf = this.dedup.isDuplicate(url, finalExtracted.text);
+        if (dupOf) {
+          return; // Skip duplicate content
+        }
 
         // Check content diff
         if (options.cache !== false && this.config.cache?.contentHashing) {
@@ -358,8 +402,98 @@ export class CrawlPipeline {
     return true;
   }
 
+  /** Resolve relative markdown links to absolute URLs */
+  private resolveLinks(markdown: string, baseUrl: string): string {
+    return markdown.replace(/\[([^\]]*)\]\(([^)]+)\)/g, (match, text, href) => {
+      if (href.startsWith('http') || href.startsWith('#') || href.startsWith('mailto:')) return match;
+      try {
+        const resolved = new URL(href, baseUrl).href;
+        return `[${text}](${resolved})`;
+      } catch {
+        return match;
+      }
+    });
+  }
+
+  /** Handle PDF extraction */
+  private async handlePdf(options: CrawlOptions, startTime: number): Promise<CrawlResult> {
+    const extracted = await this.pdfExtractor.extract(options.url);
+    const chunks = this.chunker.chunk(
+      extracted.markdown, extracted.url, extracted.title, extracted.headings, this.config.chunking,
+    );
+    const totalTokens = chunks.reduce((s, c) => s + c.tokens, 0);
+    return {
+      pages: [extracted],
+      context: {
+        id: createHash('sha256').update(options.url).digest('hex').slice(0, 16),
+        source: options.url,
+        chunks,
+        summary: extracted.description,
+        totalTokens,
+        metadata: {
+          crawledAt: new Date().toISOString(),
+          pageCount: 1,
+          contentType: 'documentation',
+          relationships: [],
+        },
+        format: 'markdown',
+      },
+      stats: {
+        pagesProcessed: 1, totalTokens, duration: Date.now() - startTime,
+        errors: [], cached: 0, cacheHits: 0, cacheMisses: 0, retries: 0,
+      },
+    };
+  }
+
+  /** Handle GitHub repository extraction */
+  private async handleGitHub(options: CrawlOptions, startTime: number): Promise<CrawlResult> {
+    const pages: ExtractedContent[] = [];
+
+    // Always get README
+    const readme = await this.githubExtractor.extractReadme(options.url);
+    pages.push(readme);
+
+    // If depth > 0, also get docs folder
+    if ((options.depth ?? 0) > 0) {
+      const docs = await this.githubExtractor.extractDocs(options.url);
+      pages.push(...docs.slice(0, (options.maxPages ?? 50) - 1));
+    }
+
+    const allChunks: ContentChunk[] = [];
+    for (const page of pages) {
+      const chunks = this.chunker.chunk(
+        page.markdown, page.url, page.title, page.headings, this.config.chunking,
+      );
+      allChunks.push(...chunks);
+    }
+
+    const totalTokens = allChunks.reduce((s, c) => s + c.tokens, 0);
+    return {
+      pages,
+      context: {
+        id: createHash('sha256').update(options.url).digest('hex').slice(0, 16),
+        source: options.url,
+        chunks: allChunks,
+        summary: pages[0]?.description,
+        totalTokens,
+        metadata: {
+          crawledAt: new Date().toISOString(),
+          pageCount: pages.length,
+          contentType: 'readme',
+          relationships: this.buildRelationships(pages),
+        },
+        format: 'markdown',
+      },
+      stats: {
+        pagesProcessed: pages.length, totalTokens, duration: Date.now() - startTime,
+        errors: [], cached: 0, cacheHits: 0, cacheMisses: 0, retries: 0,
+      },
+    };
+  }
+
   /** Free resources (tiktoken encoder) */
   dispose(): void {
     this.chunker.dispose();
+    this.dedup.clear();
   }
 }
