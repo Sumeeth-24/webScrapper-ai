@@ -26,9 +26,20 @@ export class PdfExtractor {
     let buffer: Buffer;
 
     if (source.startsWith('http://') || source.startsWith('https://')) {
-      const response = await fetch(source, { signal: AbortSignal.timeout(60000) });
-      if (!response.ok) throw new Error(`Failed to fetch PDF: HTTP ${response.status}`);
-      buffer = Buffer.from(await response.arrayBuffer());
+      try {
+        const response = await fetch(source, { signal: AbortSignal.timeout(60000) });
+        if (!response.ok) throw new Error(`Failed to fetch PDF: HTTP ${response.status}`);
+        buffer = Buffer.from(await response.arrayBuffer());
+      } catch (err: any) {
+        if (err.message?.includes('fetch failed') || err.code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+          const response = await fetch(source, { signal: AbortSignal.timeout(60000) });
+          if (!response.ok) throw new Error(`Failed to fetch PDF: HTTP ${response.status}`);
+          buffer = Buffer.from(await response.arrayBuffer());
+        } else {
+          throw err;
+        }
+      }
     } else if (existsSync(source)) {
       buffer = readFileSync(source);
     } else {

@@ -90,8 +90,8 @@ export class WebContext {
   }
 
   /** Semantic search within a page's content */
-  async search(url: string, query: string, topK: number = 5): Promise<SearchResult[]> {
-    const chunks = await this.toChunks(url);
+  async search(url: string, query: string, topK: number = 5, options: Partial<CrawlOptions> = {}): Promise<SearchResult[]> {
+    const chunks = await this.toChunks(url, options);
     this.vectorSearch.index(chunks);
     return this.vectorSearch.search(query, topK);
   }

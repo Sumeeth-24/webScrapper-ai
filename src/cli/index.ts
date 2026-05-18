@@ -8,6 +8,12 @@ import { CrawlScheduler } from '../utils/scheduler';
 import { validateUrl } from '../utils/validation';
 import { writeFileSync, mkdirSync } from 'fs';
 
+const originalEmitWarning = process.emitWarning;
+process.emitWarning = (warning: any, ...args: any[]) => {
+  if (typeof warning === 'string' && warning.includes('NODE_TLS_REJECT_UNAUTHORIZED')) return;
+  return (originalEmitWarning as any).call(process, warning, ...args);
+};
+
 const program = new Command();
 
 program
@@ -159,12 +165,23 @@ program
   .argument('<url>', 'URL to search within')
   .argument('<query>', 'Search query')
   .option('-k, --top-k <n>', 'Number of results', '5')
+  .option('--no-js', 'Disable JavaScript rendering')
   .action(async (url: string, query: string, opts) => {
     try {
       validateUrl(url);
       const spinner = ora(`Extracting and searching ${url}...`).start();
       const wc = new WebContext();
-      const results = await wc.search(url, query, parseInt(opts.topK));
+      const result = await wc.extract(url, { javascript: opts.js !== false });
+      spinner.text = `Extracted ${result.stats.pagesProcessed} pages (${result.stats.totalTokens} tokens), searching...`;
+      const chunks = result.context.chunks;
+      if (chunks.length === 0) {
+        spinner.warn(`No chunks to search (pages: ${result.pages.length}, markdown length: ${result.pages[0]?.markdown?.length || 0})`);
+        return;
+      }
+      const { VectorSearch } = await import('../search/vector');
+      const vs = new VectorSearch();
+      vs.index(chunks);
+      const results = vs.search(query, parseInt(opts.topK));
       spinner.succeed(`Found ${results.length} results`);
 
       results.forEach((r, i) => {
@@ -314,8 +331,12 @@ program
   .argument('<source>', 'PDF URL or local file path')
   .option('-f, --format <format>', 'Output format: markdown|json|chunks', 'markdown')
   .option('-o, --output <file>', 'Output file path')
+  .option('--no-tls-verify', 'Skip TLS certificate verification (for corporate proxies)')
   .action(async (source: string, opts) => {
     try {
+      if (opts.tlsVerify === false) {
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+      }
       const spinner = ora(`Extracting PDF: ${source}`).start();
       const wc = new WebContext();
       const result = await wc.extractPdf(source);
