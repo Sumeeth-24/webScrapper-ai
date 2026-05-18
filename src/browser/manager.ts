@@ -82,8 +82,24 @@ export class BrowserManager {
         });
         const body = response.ok ? await response.text() : '';
         this.robotsCache.set(origin, robotsParser(robotsUrl, body));
-      } catch {
-        this.robotsCache.set(origin, robotsParser(`${origin}/robots.txt`, ''));
+      } catch (err: any) {
+        const cause = err.cause?.code || err.cause?.message || '';
+        if (cause.includes('SELF_SIGNED') || cause.includes('UNABLE_TO_VERIFY') || cause.includes('certificate')) {
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+          try {
+            const robotsUrl = `${origin}/robots.txt`;
+            const response = await fetch(robotsUrl, {
+              headers: { 'User-Agent': this.config.userAgent || 'Mozilla/5.0' },
+              signal: AbortSignal.timeout(5000),
+            });
+            const body = response.ok ? await response.text() : '';
+            this.robotsCache.set(origin, robotsParser(robotsUrl, body));
+          } catch {
+            this.robotsCache.set(origin, robotsParser(`${origin}/robots.txt`, ''));
+          }
+        } else {
+          this.robotsCache.set(origin, robotsParser(`${origin}/robots.txt`, ''));
+        }
       }
     }
     return this.robotsCache.get(origin)!.isAllowed(url, this.config.userAgent || '*') ?? true;
@@ -181,21 +197,38 @@ export class BrowserManager {
     await this.waitForToken();
 
     return this.fetchWithRetry(async () => {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': this.config.userAgent || 'WebContext/2.0',
-          ...options.headers,
-        },
-        signal: AbortSignal.timeout(30000),
-      });
-      const buffer = Buffer.from(await response.arrayBuffer());
-      const status = response.status;
+      try {
+        const response = await fetch(url, {
+          headers: {
+            'User-Agent': this.config.userAgent || 'WebContext/2.0',
+            ...options.headers,
+          },
+          signal: AbortSignal.timeout(30000),
+        });
+        const buffer = Buffer.from(await response.arrayBuffer());
+        const status = response.status;
 
-      if ((options.retryConfig?.retryOn || DEFAULT_RETRY.retryOn).includes(status)) {
-        throw new Error(`HTTP ${status}`);
+        if ((options.retryConfig?.retryOn || DEFAULT_RETRY.retryOn).includes(status)) {
+          throw new Error(`HTTP ${status}`);
+        }
+
+        return { body: buffer, status };
+      } catch (err: any) {
+        const cause = err.cause?.code || err.cause?.message || '';
+        if (cause.includes('SELF_SIGNED') || cause.includes('UNABLE_TO_VERIFY') || cause.includes('certificate')) {
+          process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+          const response = await fetch(url, {
+            headers: {
+              'User-Agent': this.config.userAgent || 'WebContext/2.0',
+              ...options.headers,
+            },
+            signal: AbortSignal.timeout(30000),
+          });
+          const buffer = Buffer.from(await response.arrayBuffer());
+          return { body: buffer, status: response.status };
+        }
+        throw err;
       }
-
-      return { body: buffer, status };
     }, options.retryConfig);
   }
 

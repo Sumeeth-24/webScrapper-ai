@@ -43,17 +43,18 @@ WebContext is a developer tool that crawls, extracts, cleans, and structures web
 npm install webcontext-ai
 ```
 
-> **Note:** WebContext works out of the box for most sites (server-rendered). For JavaScript-heavy SPAs, you also need Playwright:
+Works immediately for most documentation sites — no extra setup needed. WebContext automatically handles corporate proxy/TLS issues.
+
+> **For JavaScript-heavy SPAs** (React, Vue, Angular, Next.js), you also need Playwright:
 > ```bash
 > npm install playwright
 > npx playwright install chromium
 > ```
-> Then pass `{ javascript: true }` to enable browser rendering.
+> Then use `--js` flag in CLI or `{ javascript: true }` in SDK.
 
 > **Optional extras:**
 > ```bash
 > npm install pdf-parse    # For PDF extraction
-> npm install playwright   # For screenshots & JS rendering
 > ```
 
 ## CLI Usage
@@ -64,6 +65,15 @@ webcontext extract https://docs.example.com/api --format markdown
 
 # Crawl documentation recursively
 webcontext crawl https://docs.example.com --depth 3 --max-pages 100 -o docs.md
+
+# Crawl a JavaScript SPA (React, Vue, Angular sites)
+webcontext crawl https://docs.example.com --depth 3 --js -o docs.md
+
+# Skip robots.txt restrictions
+webcontext crawl https://docs.example.com --depth 2 --no-robots -o docs.md
+
+# Skip TLS verification (corporate proxies)
+webcontext crawl https://docs.example.com --depth 2 --no-tls-verify -o docs.md
 
 # Generate LLM-ready context with token budget
 webcontext context https://docs.example.com/quickstart --budget 4000
@@ -94,6 +104,33 @@ webcontext schedule https://docs.example.com --cron "0 */6 * * *" -o ./docs-cach
 # Start API server
 webcontext serve --port 3456
 ```
+
+### CLI Flags Reference
+
+#### `webcontext extract <url>`
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-f, --format` | Output format: `markdown\|json\|chunks` | `markdown` |
+| `-o, --output` | Output file path | stdout |
+| `--focus` | Focus mode: `full\|article\|code\|api\|readme` | `full` |
+| `--no-js` | Disable JavaScript rendering | JS enabled |
+| `--selector` | Wait for CSS selector before extraction | — |
+| `--no-tls-verify` | Skip TLS certificate verification | — |
+
+#### `webcontext crawl <url>`
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-d, --depth` | Crawl depth | `2` |
+| `-m, --max-pages` | Maximum pages to crawl | `50` |
+| `-f, --format` | Output format: `markdown\|json` | `markdown` |
+| `-o, --output` | Output file path | stdout |
+| `--include` | URL patterns to include | — |
+| `--exclude` | URL patterns to exclude | — |
+| `--delay` | Delay between requests (ms) | `500` |
+| `--sitemap` | Sitemap URL for discovery | auto-detect |
+| `--js` | Enable JavaScript rendering for SPAs | disabled |
+| `--no-robots` | Ignore robots.txt restrictions | respects robots.txt |
+| `--no-tls-verify` | Skip TLS certificate verification | — |
 
 ## SDK Usage
 
@@ -504,36 +541,84 @@ The agent calls the MCP tools automatically.
 
 ## Troubleshooting
 
-### "Executable doesn't exist" / Playwright errors
-
-Playwright is only needed for `{ javascript: true }`. Most sites work without it.
-
-```bash
-npm install playwright && npx playwright install chromium
-```
-
 ### "fetch failed" / SSL certificate errors
 
-Common in corporate environments:
+This happens when you're behind a **corporate proxy** (Zscaler, Netskope, etc.) that intercepts HTTPS traffic. WebContext automatically detects and handles this — it will retry with TLS verification disabled.
 
+If you still face issues, you can:
+
+**Option 1: Use the CLI flag (per-command)**
 ```bash
-# Windows
-set NODE_TLS_REJECT_UNAUTHORIZED=0
+webcontext crawl https://example.com --no-tls-verify -o docs.md
+```
 
-# Mac/Linux
+**Option 2: Set environment variable permanently (recommended for corporate networks)**
+```bash
+# Windows (run once, persists across sessions)
+setx NODE_TLS_REJECT_UNAUTHORIZED 0
+
+# Mac/Linux (add to ~/.bashrc or ~/.zshrc)
 export NODE_TLS_REJECT_UNAUTHORIZED=0
 ```
 
-### Empty extraction / "No pages extracted"
+**Option 3: Trust your corporate CA certificate (most secure)**
+```bash
+# Get the CA cert from your IT team, then:
+# Windows
+setx NODE_EXTRA_CA_CERTS "C:\path\to\corporate-ca.pem"
 
-1. **SPA sites** (React/Vue/Angular) need `{ javascript: true }` + Playwright
-2. **Landing pages** have little content — target specific doc pages
-3. **Blocked by WAF** — try with custom headers
+# Mac/Linux
+export NODE_EXTRA_CA_CERTS="/path/to/corporate-ca.pem"
+```
+
+### Empty extraction / "0 pages" / "No pages extracted"
+
+The CLI will show helpful hints when this happens. Common causes:
+
+1. **SPA sites** (React, Vue, Angular, Next.js) — The HTML is empty without JavaScript execution:
+   ```bash
+   webcontext crawl https://spa-site.com --js --depth 3 -o docs.md
+   ```
+   This requires Playwright to be installed (see below).
+
+2. **Blocked by robots.txt** — Some sites disallow bots:
+   ```bash
+   webcontext crawl https://example.com --no-robots -o docs.md
+   ```
+
+3. **URL returns an error** — Validate the URL first:
+   ```bash
+   webcontext validate https://example.com
+   ```
+
+### "Playwright is required for JavaScript rendering"
+
+Playwright is only needed when using `--js` flag (for SPAs). Install it:
+
+```bash
+npm install playwright
+npx playwright install chromium
+```
+
+Without `--js`, WebContext uses fast static HTTP fetching which works for most documentation sites.
 
 ### "pdf-parse is required"
 
 ```bash
 npm install pdf-parse
+```
+
+### "'webcontext' is not recognized as a command"
+
+The CLI binary is only available globally or via `npx`:
+
+```bash
+# Option 1: Use npx (no global install)
+npx webcontext-ai crawl https://example.com -o docs.md
+
+# Option 2: Install globally
+npm install -g webcontext-ai
+webcontext crawl https://example.com -o docs.md
 ```
 
 ## Architecture

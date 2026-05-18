@@ -24,8 +24,12 @@ program
   .option('--focus <mode>', 'Focus mode: full|article|code|api|readme', 'full')
   .option('--no-js', 'Disable JavaScript rendering')
   .option('--selector <css>', 'Wait for CSS selector before extraction')
+  .option('--no-tls-verify', 'Skip TLS certificate verification (for corporate proxies)')
   .action(async (url: string, opts) => {
     try {
+      if (opts.tlsVerify === false) {
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+      }
       validateUrl(url);
       const spinner = ora(`Extracting content from ${url}`).start();
       const wc = new WebContext();
@@ -72,8 +76,14 @@ program
   .option('--exclude <patterns...>', 'URL patterns to exclude')
   .option('--delay <ms>', 'Delay between requests in ms', '500')
   .option('--sitemap <url>', 'Sitemap URL to use for discovery')
+  .option('--js', 'Enable JavaScript rendering for SPAs')
+  .option('--no-robots', 'Ignore robots.txt restrictions')
+  .option('--no-tls-verify', 'Skip TLS certificate verification (for corporate proxies)')
   .action(async (url: string, opts) => {
     try {
+      if (opts.tlsVerify === false) {
+        process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+      }
       validateUrl(url);
       const spinner = ora(`Crawling ${url} (depth: ${opts.depth}, max: ${opts.maxPages} pages)`).start();
       const wc = new WebContext();
@@ -84,11 +94,24 @@ program
         excludePatterns: opts.exclude,
         delay: parseInt(opts.delay),
         sitemapUrl: opts.sitemap,
+        javascript: opts.js === true,
+        respectRobotsTxt: opts.robots !== false,
       });
       spinner.succeed(`${result.stats.pagesProcessed} pages | ${result.stats.totalTokens} tokens | ${result.stats.duration}ms`);
 
       if (result.stats.errors.length) {
-        console.log(chalk.yellow(`⚠ ${result.stats.errors.length} errors`));
+        console.log(chalk.yellow(`⚠ ${result.stats.errors.length} errors:`));
+        result.stats.errors.forEach(e => console.log(chalk.dim(`  • ${e.url}: ${e.error}`)));
+      }
+
+      if (result.stats.pagesProcessed === 0) {
+        console.log(chalk.yellow('\nNo pages were extracted. Common causes:'));
+        console.log(chalk.dim('  • Site uses client-side rendering (try adding --js flag)'));
+        console.log(chalk.dim('  • Blocked by robots.txt (try adding --no-robots flag)'));
+        console.log(chalk.dim('  • URL is incorrect or returns an error'));
+        if (opts.js !== true) {
+          console.log(chalk.cyan('\n  Tip: npx webcontext crawl <url> --js --depth 3'));
+        }
       }
 
       const output = opts.format === 'json'

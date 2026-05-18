@@ -263,7 +263,8 @@ export class CrawlPipeline {
           }, options.checkpointDir);
         }
       } catch (err: any) {
-        errors.push({ url, error: err.message });
+        const detail = err.cause?.message || err.cause?.code || '';
+        errors.push({ url, error: detail ? `${err.message} (${detail})` : err.message });
       }
     };
 
