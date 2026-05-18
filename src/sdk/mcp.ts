@@ -152,5 +152,48 @@ export function createMCPTools(config?: any): MCPTool[] {
         };
       },
     },
+    {
+      name: 'webcontext_pipeline',
+      description: 'Full AI data pipeline: crawl → chunk → export for vector DB. One tool to ingest any web content into your RAG system.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          url: { type: 'string', description: 'URL, PDF path, or GitHub repo URL to ingest' },
+          depth: { type: 'number', description: 'Crawl depth (default: 2)' },
+          maxPages: { type: 'number', description: 'Max pages to crawl (default: 50)' },
+          chunkStrategy: { type: 'string', enum: ['semantic', 'heading', 'paragraph', 'fixed'], description: 'Chunking strategy (default: semantic)' },
+          maxTokensPerChunk: { type: 'number', description: 'Max tokens per chunk (default: 1500)' },
+          exportFormat: { type: 'string', enum: ['pinecone', 'chroma', 'weaviate', 'qdrant', 'json'], description: 'Vector DB export format (default: json)' },
+          namespace: { type: 'string', description: 'Namespace/collection name for vector DB' },
+        },
+        required: ['url'],
+      },
+      handler: async (input: { url: string; depth?: number; maxPages?: number; chunkStrategy?: string; maxTokensPerChunk?: number; exportFormat?: string; namespace?: string }) => {
+        const pipelineWc = new WebContext({
+          chunking: { maxTokens: input.maxTokensPerChunk ?? 1500, strategy: (input.chunkStrategy as any) ?? 'semantic', overlap: 100 },
+          cache: { enabled: true, ttl: 3600, maxSize: 500, contentHashing: true },
+        });
+        try {
+          const result = await pipelineWc.crawlDocs(input.url, { depth: input.depth ?? 2, maxPages: input.maxPages ?? 50 });
+          const { VectorDBExporter } = await import('../export');
+          const exporter = new VectorDBExporter();
+          const exported = exporter.exportChunks(result.context.chunks, {
+            format: (input.exportFormat as any) ?? 'json',
+            namespace: input.namespace,
+          });
+          return {
+            summary: `Crawled ${result.stats.pagesProcessed} pages, ${result.context.chunks.length} chunks, ${result.stats.totalTokens} tokens`,
+            pages: result.pages.map(p => p.title),
+            chunks: result.context.chunks.length,
+            totalTokens: result.stats.totalTokens,
+            exportFormat: input.exportFormat ?? 'json',
+            exportedData: exported.slice(0, 5000),
+            diffs: result.diffs?.filter(d => d.changed).map(d => ({ url: d.url, added: d.addedSections, removed: d.removedSections })) || [],
+          };
+        } finally {
+          pipelineWc.dispose();
+        }
+      },
+    },
   ];
 }

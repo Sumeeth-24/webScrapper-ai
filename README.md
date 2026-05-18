@@ -301,6 +301,34 @@ Add to your MCP configuration:
 | `webcontext_summarize` | Summarize a web page | "Summarize this API reference page" |
 | `webcontext_github` | Extract GitHub repo docs | "Get the README from TanStack/query" |
 | `webcontext_pdf` | Extract PDF content | "Extract text from this research paper PDF" |
+| `webcontext_pipeline` | Full pipeline: crawl → chunk → export for vector DB | "Pipeline https://docs.stripe.com depth 3, semantic chunks, export as pinecone namespace stripe-docs" |
+
+### One-Prompt Full Pipeline
+
+The `webcontext_pipeline` tool handles the entire data ingestion workflow in a single call:
+
+```
+"Use webcontext_pipeline to crawl https://docs.stripe.com depth 3,
+chunk semantically at 1500 tokens, and export as pinecone format
+with namespace 'stripe-docs'"
+```
+
+This one prompt does:
+1. **Crawls** the URL recursively to the specified depth
+2. **Chunks** content using your chosen strategy (semantic, heading, paragraph, fixed)
+3. **Exports** in vector DB format (Pinecone, Chroma, Weaviate, Qdrant, JSON)
+4. **Diffs** content against cache to show what changed since last crawl
+
+Parameters:
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `url` | URL, PDF path, or GitHub repo to ingest | required |
+| `depth` | Crawl depth | `2` |
+| `maxPages` | Maximum pages to crawl | `50` |
+| `chunkStrategy` | `semantic\|heading\|paragraph\|fixed` | `semantic` |
+| `maxTokensPerChunk` | Token limit per chunk | `1500` |
+| `exportFormat` | `pinecone\|chroma\|weaviate\|qdrant\|json` | `json` |
+| `namespace` | Namespace/collection name for vector DB | — |
 
 ## Streaming
 
