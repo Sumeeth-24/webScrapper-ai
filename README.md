@@ -1,5 +1,5 @@
 # WebContext AI
-https://github.com/Sumeeth-24/webScrapper-ai/blob/main/webcontext.png?raw=true
+![image alt](https://github.com/Sumeeth-24/webScrapper-ai/blob/main/webcontext.png?raw=true)
 
 > Turn any web content into clean AI-ready context — with crawling, chunking, semantic search, vector DB export, and MCP tools.
 
