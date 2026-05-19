@@ -1,6 +1,6 @@
 {
   "name": "webcontext-ai",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Turn any web content into clean AI-ready context — with crawling, chunking, semantic search, and MCP tools",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -89,7 +89,6 @@
     "robots-parser": "3.0.1",
     "tiktoken": "1.0.15",
     "turndown": "7.2.0",
-    "webcontext-ai": "^1.0.0",
     "zod": "3.23.8"
   },
   "optionalDependencies": {

@@ -290,6 +290,30 @@ Add to your MCP configuration:
 }
 ```
 
+### Local Development Setup (if cloned from GitHub)
+
+If you cloned the repo instead of installing from npm, you need to build first:
+
+```bash
+git clone https://github.com/Sumeeth-24/webScrapper-ai.git
+cd webScrapper-ai
+npm install
+npm run build
+```
+
+Then point your MCP config to the local build:
+
+```json
+{
+  "mcpServers": {
+    "webcontext": {
+      "command": "node",
+      "args": ["./dist/mcp-server.js"]
+    }
+  }
+}
+```
+
 ### Available MCP Tools
 
 | Tool | Description | Example Prompt |
